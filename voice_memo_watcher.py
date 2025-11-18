@@ -392,6 +392,199 @@ class VoiceMemoTranscriber:
                     logger.warning(f"Не удалось удалить временный файл {chunk_file}: {e}")
 
 
+class TaskExtractor:
+    """Класс для извлечения задач и напоминаний из текста"""
+
+    def __init__(self, client: OpenAI, model: str = "llama-3.3-70b-versatile"):
+        self.client = client
+        self.model = model
+
+    def extract_tasks(self, transcript: str, date: datetime) -> Dict[str, List[str]]:
+        """Извлечь задачи и напоминания из текста
+
+        Returns:
+            Dict с ключами 'tasks' (список задач) и 'important' (важные заметки)
+        """
+        try:
+            logger.info("Извлекаем задачи и напоминания из текста...")
+
+            prompt = f"""Проанализируй текст голосовой заметки и извлеки из него:
+1. Задачи и дела, которые нужно сделать
+2. Важные напоминания и заметки на будущее
+
+ТЕКСТ:
+{transcript}
+
+ПРАВИЛА:
+- Извлекай только конкретные действия и напоминания
+- Формулируй задачи кратко и понятно
+- Если в тексте нет задач или напоминаний, верни пустые списки
+- НЕ придумывай задачи, которых нет в тексте
+- Сохраняй имена, даты и детали как есть
+
+ФОРМАТ ОТВЕТА (строго JSON):
+{{
+  "tasks": [
+    "Конкретная задача 1",
+    "Конкретная задача 2"
+  ],
+  "important": [
+    "Важное напоминание 1",
+    "Важная заметка 2"
+  ]
+}}
+
+ПРИМЕРЫ ЗАДАЧ:
+- "Позвонить Оксане в пятницу"
+- "Купить продукты для ужина"
+- "Отправить отчет до конца недели"
+- "Записаться к врачу"
+
+ПРИМЕРЫ ВАЖНЫХ ЗАМЕТОК:
+- "Встреча с психологом 15 ноября в 14:00"
+- "День рождения Юли 20 числа"
+- "Не забыть про презентацию в понедельник"
+
+Верни ТОЛЬКО JSON без дополнительных комментариев."""
+
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.2,
+                max_tokens=1000
+            )
+
+            result_text = response.choices[0].message.content.strip()
+
+            # Убираем возможные markdown блоки кода
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+                result_text = result_text.strip()
+
+            result = json.loads(result_text)
+
+            tasks_count = len(result.get('tasks', []))
+            important_count = len(result.get('important', []))
+            logger.info(f"Извлечено задач: {tasks_count}, важных заметок: {important_count}")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Ошибка извлечения задач: {e}")
+            return {"tasks": [], "important": []}
+
+
+class TaskManager:
+    """Класс для управления единым файлом с задачами из дневника"""
+
+    def __init__(self, tasks_file_path: str = "Задачи из дневника.md"):
+        self.tasks_file_path = Path(tasks_file_path)
+        self._ensure_file_exists()
+
+    def _ensure_file_exists(self):
+        """Создать файл, если его нет"""
+        if not self.tasks_file_path.exists():
+            with open(self.tasks_file_path, 'w', encoding='utf-8') as f:
+                f.write("# Задачи и напоминания из дневника\n\n")
+            logger.info(f"Создан файл задач: {self.tasks_file_path}")
+
+    def _get_month_name(self, date: datetime) -> str:
+        """Получить название месяца на русском"""
+        months = {
+            1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
+            5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
+            9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
+        }
+        return f"{months[date.month]} {date.year}"
+
+    def _get_day_name(self, date: datetime) -> str:
+        """Получить название дня недели на русском"""
+        days = {
+            0: "понедельник", 1: "вторник", 2: "среда", 3: "четверг",
+            4: "пятница", 5: "суббота", 6: "воскресенье"
+        }
+        return f"{date.day} {date.strftime('%B').lower()}, {days[date.weekday()]}"
+
+    def add_tasks(self, date: datetime, tasks: List[str], important: List[str], note_title: str = None):
+        """Добавить задачи и напоминания в файл
+
+        Args:
+            date: Дата записи
+            tasks: Список задач
+            important: Список важных напоминаний
+            note_title: Название заметки (опционально)
+        """
+        # Если нет задач и важных заметок, ничего не добавляем
+        if not tasks and not important:
+            logger.info("Нет задач или напоминаний для добавления")
+            return
+
+        try:
+            # Читаем текущее содержимое
+            with open(self.tasks_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            month_header = f"## {self._get_month_name(date)}"
+            day_header = f"### {date.day} {self._get_month_name(date).split()[0].lower()}, {['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'][date.weekday()]}"
+
+            # Формируем новую секцию
+            new_section = f"\n{day_header}\n\n"
+
+            if note_title:
+                new_section += f"*Из заметки: {note_title}*\n\n"
+
+            if tasks:
+                new_section += "#### Задачи\n"
+                for task in tasks:
+                    new_section += f"- [ ] {task}\n"
+                new_section += "\n"
+
+            if important:
+                new_section += "#### Важное\n"
+                for item in important:
+                    new_section += f"- {item}\n"
+                new_section += "\n"
+
+            new_section += "---\n"
+
+            # Проверяем, есть ли уже раздел для этого месяца
+            if month_header in content:
+                # Месяц уже есть, добавляем в конец месяца
+                parts = content.split(month_header)
+                before_month = parts[0] + month_header
+                after_month = parts[1]
+
+                # Ищем следующий месяц
+                next_month_pos = after_month.find("\n## ")
+                if next_month_pos != -1:
+                    # Вставляем перед следующим месяцем
+                    month_content = after_month[:next_month_pos]
+                    rest = after_month[next_month_pos:]
+                    new_content = before_month + month_content + new_section + rest
+                else:
+                    # Это последний месяц, добавляем в конец
+                    new_content = content + new_section
+            else:
+                # Месяца нет, добавляем новый раздел
+                new_content = content + f"\n{month_header}\n" + new_section
+
+            # Записываем обновленное содержимое
+            with open(self.tasks_file_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+
+            logger.info(f"Задачи добавлены в {self.tasks_file_path}")
+
+        except Exception as e:
+            logger.error(f"Ошибка добавления задач в файл: {e}")
+
+
 class ObsidianWriter:
     """Класс для сохранения заметок в Obsidian"""
 
@@ -453,10 +646,14 @@ class VoiceMemoHandler(FileSystemEventHandler):
 
     def __init__(self, transcriber: VoiceMemoTranscriber,
                  obsidian_writer: ObsidianWriter,
-                 tracker: ProcessedFilesTracker):
+                 tracker: ProcessedFilesTracker,
+                 task_extractor: TaskExtractor = None,
+                 task_manager: TaskManager = None):
         self.transcriber = transcriber
         self.obsidian_writer = obsidian_writer
         self.tracker = tracker
+        self.task_extractor = task_extractor
+        self.task_manager = task_manager
         self.processing = set()
 
     def on_created(self, event):
@@ -495,6 +692,10 @@ class VoiceMemoHandler(FileSystemEventHandler):
                 logger.warning(f"Файл не найден: {file_path}")
                 return
 
+            # Получаем дату создания файла
+            file_stat = Path(file_path).stat()
+            created_time = datetime.fromtimestamp(file_stat.st_ctime)
+
             # Транскрибируем
             logger.info("Начинаем транскрипцию...")
             transcription, title = self.transcriber.transcribe(file_path)
@@ -502,6 +703,17 @@ class VoiceMemoHandler(FileSystemEventHandler):
             # Сохраняем в Obsidian
             logger.info("Сохраняем в Obsidian...")
             note_path = self.obsidian_writer.save_transcription(file_path, transcription, title)
+
+            # Извлекаем задачи и напоминания (если включено)
+            if self.task_extractor and self.task_manager:
+                logger.info("Извлекаем задачи из записи...")
+                tasks_data = self.task_extractor.extract_tasks(transcription, created_time)
+                self.task_manager.add_tasks(
+                    date=created_time,
+                    tasks=tasks_data.get('tasks', []),
+                    important=tasks_data.get('important', []),
+                    note_title=title
+                )
 
             # Отмечаем как обработанный
             self.tracker.mark_processed(file_path)
@@ -560,6 +772,8 @@ def main():
     obsidian_vault_path = os.getenv('OBSIDIAN_VAULT_PATH')
     language = os.getenv('TRANSCRIPTION_LANGUAGE', 'ru')
     improve_text = os.getenv('IMPROVE_TEXT', 'true').lower() == 'true'
+    extract_tasks = os.getenv('EXTRACT_TASKS', 'true').lower() == 'true'
+    tasks_file_path = os.getenv('TASKS_FILE_PATH', 'Задачи из дневника.md')
 
     # Проверяем наличие необходимых настроек
     if not api_key:
@@ -577,6 +791,7 @@ def main():
     # Расширяем путь (для поддержки ~)
     voice_memos_path = os.path.expanduser(voice_memos_path)
     obsidian_vault_path = os.path.expanduser(obsidian_vault_path)
+    tasks_file_path = os.path.expanduser(tasks_file_path)
 
     # Проверяем существование папки Voice Memos
     if not os.path.exists(voice_memos_path):
@@ -590,12 +805,28 @@ def main():
     logger.info(f"🤖 Модель: {model}")
     logger.info(f"🌍 Язык: {language}")
     logger.info(f"✨ Улучшение текста: {'включено' if improve_text else 'выключено'}")
+    logger.info(f"📋 Извлечение задач: {'включено' if extract_tasks else 'выключено'}")
+    if extract_tasks:
+        logger.info(f"📄 Файл задач: {tasks_file_path}")
 
     # Создаем объекты
     tracker = ProcessedFilesTracker()
     transcriber = VoiceMemoTranscriber(api_key, model, language, improve_text)
     obsidian_writer = ObsidianWriter(obsidian_vault_path)
-    event_handler = VoiceMemoHandler(transcriber, obsidian_writer, tracker)
+
+    # Создаем объекты для извлечения задач (если включено)
+    task_extractor = None
+    task_manager = None
+    if extract_tasks:
+        # Создаем клиента для Groq API
+        groq_client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.groq.com/openai/v1"
+        )
+        task_extractor = TaskExtractor(groq_client)
+        task_manager = TaskManager(tasks_file_path)
+
+    event_handler = VoiceMemoHandler(transcriber, obsidian_writer, tracker, task_extractor, task_manager)
 
     # Обрабатываем существующие файлы
     process_existing_files(voice_memos_path, event_handler)
