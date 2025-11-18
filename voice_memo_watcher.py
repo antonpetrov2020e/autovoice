@@ -80,6 +80,9 @@ class VoiceMemoTranscriber:
         self.improve_text = improve_text
         # Модель для улучшения текста
         self.text_model = "llama-3.3-70b-versatile"
+        # Путь к пользовательскому словарю
+        self.dictionary_path = "custom_dictionary.txt"
+        self.custom_dictionary = self._load_dictionary()
 
     def _encode_audio_to_base64(self, audio_file_path: str) -> str:
         """Конвертировать аудио файл в base64"""
@@ -100,15 +103,106 @@ class VoiceMemoTranscriber:
         }
         return mime_types.get(ext, 'audio/mp4')
 
+    def _load_dictionary(self) -> str:
+        """Загрузить пользовательский словарь"""
+        try:
+            if os.path.exists(self.dictionary_path):
+                with open(self.dictionary_path, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    if content:
+                        logger.info(f"Загружен словарь из {self.dictionary_path}")
+                        return content
+        except Exception as e:
+            logger.error(f"Ошибка загрузки словаря: {e}")
+        return ""
+
+    def _save_to_dictionary(self, words: list):
+        """Добавить слова в пользовательский словарь"""
+        try:
+            existing = set()
+            if os.path.exists(self.dictionary_path):
+                with open(self.dictionary_path, 'r', encoding='utf-8') as f:
+                    existing = set(line.strip() for line in f if line.strip())
+
+            new_words = [w for w in words if w and w not in existing]
+
+            if new_words:
+                with open(self.dictionary_path, 'a', encoding='utf-8') as f:
+                    for word in new_words:
+                        f.write(f"{word}\n")
+                logger.info(f"Добавлено {len(new_words)} слов в словарь")
+                # Обновляем загруженный словарь
+                self.custom_dictionary = self._load_dictionary()
+        except Exception as e:
+            logger.error(f"Ошибка сохранения в словарь: {e}")
+
+    def _generate_title(self, transcript: str) -> str:
+        """Сгенерировать осмысленный заголовок для записи"""
+        try:
+            logger.info("Генерируем заголовок...")
+
+            prompt = f"""На основе текста голосовой записи создай краткий заголовок.
+
+ТЕКСТ:
+{transcript[:1000]}
+
+ПРАВИЛА:
+1. Если в тексте упоминается конкретная дата (например, "15 ноября, суббота"), используй её как заголовок
+2. Если даты нет, создай краткое описание темы (2-5 слов)
+3. Заголовок должен быть информативным и помогать быстро понять о чем запись
+4. Используй формат: "Дата" или "Краткое описание темы"
+5. Не добавляй кавычки или лишние символы
+
+ПРИМЕРЫ:
+- "15 ноября, суббота"
+- "Встреча с психологом"
+- "Планы на неделю"
+- "Разговор с Юлей о проекте"
+
+Верни ТОЛЬКО заголовок без комментариев."""
+
+            response = self.client.chat.completions.create(
+                model=self.text_model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.3,
+                max_tokens=100
+            )
+
+            title = response.choices[0].message.content.strip()
+            # Убираем возможные кавычки
+            title = title.strip('"\'«»')
+            logger.info(f"Сгенерирован заголовок: {title}")
+
+            return title
+
+        except Exception as e:
+            logger.error(f"Ошибка генерации заголовка: {e}")
+            return "Голосовая заметка"
+
     def _improve_transcript(self, transcript: str) -> str:
         """Улучшить транскрипцию: исправить ошибки, разбить на абзацы"""
         try:
             logger.info("Улучшаем текст транскрипции...")
 
+            # Формируем информацию о словаре
+            dictionary_info = ""
+            if self.custom_dictionary:
+                dictionary_info = f"""
+
+ПОЛЬЗОВАТЕЛЬСКИЙ СЛОВАРЬ (используй эти правильные написания):
+{self.custom_dictionary}
+"""
+
             prompt = f"""Ты редактор текста. Твоя задача - улучшить транскрипцию голосовой записи.
 
 ИСХОДНЫЙ ТЕКСТ:
 {transcript}
+{dictionary_info}
 
 ЗАДАЧИ:
 1. Исправь опечатки и грамматические ошибки
@@ -118,10 +212,17 @@ class VoiceMemoTranscriber:
 5. Не добавляй ничего от себя, только редактируй существующий текст
 6. Сохрани все имена, даты, цифры как есть
 
+ВАЖНЫЕ ПРАВИЛА ФОРМАТИРОВАНИЯ:
+- Используй ТОЛЬКО «ёлочки» для кавычек (« »), никогда не используй " "
+- Используй длинное тире (—) для пауз и пояснений, не используй дефис (-)
+- Дефис (-) используй только в сложных словах (кто-то, где-то, по-русски)
+- Если в словаре указаны имена или термины, используй их точное написание
+
 ВАЖНО:
 - Верни ТОЛЬКО отредактированный текст без комментариев
 - Не добавляй заголовки, вступления или заключения
-- Текст должен оставаться в первом лице и сохранять интонацию автора"""
+- Текст должен оставаться в первом лице и сохранять интонацию автора
+- Если встретишь редкие имена, фамилии, термины или названия, которых нет в словаре, в конце текста после тега [СЛОВАРЬ] перечисли их через запятую"""
 
             response = self.client.chat.completions.create(
                 model=self.text_model,
@@ -136,6 +237,15 @@ class VoiceMemoTranscriber:
             )
 
             improved_text = response.choices[0].message.content.strip()
+
+            # Проверяем, есть ли новые слова для словаря
+            if "[СЛОВАРЬ]" in improved_text:
+                parts = improved_text.split("[СЛОВАРЬ]")
+                improved_text = parts[0].strip()
+                if len(parts) > 1:
+                    new_words = [w.strip() for w in parts[1].strip().split(',')]
+                    self._save_to_dictionary(new_words)
+
             logger.info(f"Текст улучшен: {len(improved_text)} символов")
 
             return improved_text
@@ -145,8 +255,12 @@ class VoiceMemoTranscriber:
             logger.info("Возвращаем исходную транскрипцию")
             return transcript
 
-    def transcribe(self, audio_file_path: str) -> str:
-        """Транскрибировать аудио файл через Groq Whisper"""
+    def transcribe(self, audio_file_path: str) -> tuple[str, str]:
+        """Транскрибировать аудио файл через Groq Whisper
+
+        Returns:
+            tuple: (transcript, title) - текст транскрипции и сгенерированный заголовок
+        """
         try:
             logger.info(f"Начинаем транскрипцию через Groq Whisper: {audio_file_path}")
 
@@ -168,11 +282,13 @@ class VoiceMemoTranscriber:
             logger.info(f"Транскрипция завершена: {len(transcript)} символов")
             logger.info(f"Первые 200 символов: {transcript[:200]}...")
 
-            # Улучшаем текст, если включено
+            # Генерируем заголовок ДО улучшения текста (чтобы захватить упоминание даты)
+            title = "Голосовая заметка"
             if self.improve_text:
+                title = self._generate_title(transcript)
                 transcript = self._improve_transcript(transcript)
 
-            return transcript
+            return transcript, title
 
         except Exception as e:
             logger.error(f"Ошибка транскрипции {audio_file_path}: {e}")
@@ -186,21 +302,26 @@ class ObsidianWriter:
         self.vault_path = Path(vault_path)
         self.vault_path.mkdir(parents=True, exist_ok=True)
 
-    def save_transcription(self, audio_file_path: str, transcription: str) -> str:
+    def save_transcription(self, audio_file_path: str, transcription: str, title: str = None) -> str:
         """Сохранить транскрипцию в Obsidian"""
         # Получаем информацию о файле
         audio_path = Path(audio_file_path)
         file_stat = audio_path.stat()
         created_time = datetime.fromtimestamp(file_stat.st_ctime)
 
-        # Формируем имя файла в формате: YYYY-MM-DD - Voice Memo.md
-        note_name = created_time.strftime("%Y-%m-%d - Voice Memo")
+        # Используем сгенерированный заголовок или дефолтный
+        if not title or title == "Голосовая заметка":
+            note_name = created_time.strftime("%Y-%m-%d — Voice Memo")
+        else:
+            note_name = title
+
         note_path = self.vault_path / f"{note_name}.md"
 
         # Если файл уже существует, добавляем счетчик
         counter = 1
+        original_note_name = note_name
         while note_path.exists():
-            note_name = created_time.strftime(f"%Y-%m-%d - Voice Memo {counter}")
+            note_name = f"{original_note_name} {counter}"
             note_path = self.vault_path / f"{note_name}.md"
             counter += 1
 
@@ -279,11 +400,11 @@ class VoiceMemoHandler(FileSystemEventHandler):
 
             # Транскрибируем
             logger.info("Начинаем транскрипцию...")
-            transcription = self.transcriber.transcribe(file_path)
+            transcription, title = self.transcriber.transcribe(file_path)
 
             # Сохраняем в Obsidian
             logger.info("Сохраняем в Obsidian...")
-            note_path = self.obsidian_writer.save_transcription(file_path, transcription)
+            note_path = self.obsidian_writer.save_transcription(file_path, transcription, title)
 
             # Отмечаем как обработанный
             self.tracker.mark_processed(file_path)

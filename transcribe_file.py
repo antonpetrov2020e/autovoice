@@ -63,9 +63,10 @@ def main():
     try:
         # Транскрибируем
         print("⏳ Транскрибируем...")
-        transcription = transcriber.transcribe(audio_file)
+        transcription, title = transcriber.transcribe(audio_file)
 
         print(f"✅ Транскрипция завершена ({len(transcription)} символов)")
+        print(f"📌 Заголовок: {title}")
         print()
         print("=" * 60)
         print("ТЕКСТ:")
@@ -76,7 +77,7 @@ def main():
 
         # Сохраняем в Obsidian
         print("💾 Сохраняем в Obsidian...")
-        note_path = obsidian_writer.save_transcription(audio_file, transcription)
+        note_path = obsidian_writer.save_transcription(audio_file, transcription, title)
         print(f"✅ Заметка сохранена: {note_path}")
 
     except Exception as e:
