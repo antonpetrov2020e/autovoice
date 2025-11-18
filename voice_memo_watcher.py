@@ -67,28 +67,16 @@ class ProcessedFilesTracker:
 
 
 class VoiceMemoTranscriber:
-    """Класс для транскрипции голосовых заметок через OpenRouter (Gemini)"""
+    """Класс для транскрипции голосовых заметок через Groq (Whisper Large v3)"""
 
-    def __init__(self, api_key: str, model: str = "google/gemini-2.5-flash-lite-preview-09-2025", language: str = "ru"):
-        # Используем OpenRouter через совместимый с OpenAI интерфейс
+    def __init__(self, api_key: str, model: str = "whisper-large-v3-turbo", language: str = "ru"):
+        # Используем Groq с Whisper
         self.client = OpenAI(
             api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
+            base_url="https://api.groq.com/openai/v1"
         )
         self.model = model
         self.language = language
-        self.language_names = {
-            'ru': 'русском',
-            'en': 'английском',
-            'es': 'испанском',
-            'fr': 'французском',
-            'de': 'немецком',
-            'it': 'итальянском',
-            'pt': 'португальском',
-            'zh': 'китайском',
-            'ja': 'японском',
-            'ko': 'корейском'
-        }
 
     def _encode_audio_to_base64(self, audio_file_path: str) -> str:
         """Конвертировать аудио файл в base64"""
@@ -110,56 +98,27 @@ class VoiceMemoTranscriber:
         return mime_types.get(ext, 'audio/mp4')
 
     def transcribe(self, audio_file_path: str) -> str:
-        """Транскрибировать аудио файл через Gemini"""
+        """Транскрибировать аудио файл через Groq Whisper"""
         try:
-            logger.info(f"Начинаем транскрипцию через Gemini: {audio_file_path}")
+            logger.info(f"Начинаем транскрипцию через Groq Whisper: {audio_file_path}")
 
             # Получаем размер файла
             file_size_mb = os.path.getsize(audio_file_path) / (1024 * 1024)
             logger.info(f"Размер файла: {file_size_mb:.2f} MB")
 
-            # Кодируем аудио в base64
-            logger.info("Кодируем аудио в base64...")
-            audio_base64 = self._encode_audio_to_base64(audio_file_path)
-            mime_type = self._get_mime_type(audio_file_path)
-
-            # Формируем запрос к Gemini
-            language_name = self.language_names.get(self.language, self.language)
-            prompt = f"""Пожалуйста, транскрибируй это аудио на {language_name} языке.
-
-Требования:
-- Верни только текст транскрипции без дополнительных комментариев
-- Сохрани естественную структуру речи с абзацами
-- Не добавляй метаданные, заголовки или пояснения
-- Если речь неразборчива, пропусти эти фрагменты"""
-
-            # Отправляем запрос
+            # Whisper API принимает файл напрямую
             logger.info(f"Отправляем запрос к модели {self.model}...")
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": prompt
-                            },
-                            {
-                                "type": "input_audio",
-                                "input_audio": {
-                                    "data": audio_base64,
-                                    "format": mime_type.split('/')[-1]
-                                }
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=4096
-            )
 
-            transcript = response.choices[0].message.content.strip()
+            with open(audio_file_path, 'rb') as audio_file:
+                transcript = self.client.audio.transcriptions.create(
+                    model=self.model,
+                    file=audio_file,
+                    language=self.language,
+                    response_format="text"
+                )
+
             logger.info(f"Транскрипция завершена: {len(transcript)} символов")
+            logger.info(f"Первые 200 символов: {transcript[:200]}...")
 
             return transcript
 
@@ -325,15 +284,15 @@ def main():
     load_dotenv()
 
     # Получаем настройки
-    api_key = os.getenv('OPENROUTER_API_KEY')
-    model = os.getenv('TRANSCRIPTION_MODEL', 'google/gemini-2.5-flash-lite-preview-09-2025')
+    api_key = os.getenv('GROQ_API_KEY')
+    model = os.getenv('TRANSCRIPTION_MODEL', 'whisper-large-v3-turbo')
     voice_memos_path = os.getenv('VOICE_MEMOS_PATH')
     obsidian_vault_path = os.getenv('OBSIDIAN_VAULT_PATH')
     language = os.getenv('TRANSCRIPTION_LANGUAGE', 'ru')
 
     # Проверяем наличие необходимых настроек
     if not api_key:
-        logger.error("❌ OPENROUTER_API_KEY не задан в .env файле")
+        logger.error("❌ GROQ_API_KEY не задан в .env файле")
         sys.exit(1)
 
     if not voice_memos_path:

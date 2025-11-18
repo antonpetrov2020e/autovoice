@@ -19,20 +19,20 @@ def check_env_file():
     return True
 
 def check_api_key():
-    """Проверка API ключа OpenRouter"""
-    api_key = os.getenv('OPENROUTER_API_KEY')
+    """Проверка API ключа Groq"""
+    api_key = os.getenv('GROQ_API_KEY')
     if not api_key:
-        print("❌ OPENROUTER_API_KEY не задан")
+        print("❌ GROQ_API_KEY не задан")
         print("💡 Добавьте ваш API ключ в .env файл")
-        print("   Получить ключ: https://openrouter.ai/keys")
+        print("   Получить ключ БЕСПЛАТНО: https://console.groq.com/keys")
         return False
 
     if api_key == "your_api_key_here":
-        print("❌ OPENROUTER_API_KEY не настроен (используется значение по умолчанию)")
+        print("❌ GROQ_API_KEY не настроен (используется значение по умолчанию)")
         print("💡 Замените 'your_api_key_here' на реальный API ключ")
         return False
 
-    print(f"✅ OPENROUTER_API_KEY задан ({api_key[:10]}...)")
+    print(f"✅ GROQ_API_KEY задан ({api_key[:10]}...)")
     return True
 
 def check_voice_memos_path():

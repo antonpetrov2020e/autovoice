@@ -30,13 +30,13 @@ def main():
     # Загружаем конфигурацию
     load_dotenv()
 
-    api_key = os.getenv('OPENROUTER_API_KEY')
-    model = os.getenv('TRANSCRIPTION_MODEL', 'google/gemini-2.5-flash-lite-preview-09-2025')
+    api_key = os.getenv('GROQ_API_KEY')
+    model = os.getenv('TRANSCRIPTION_MODEL', 'whisper-large-v3-turbo')
     obsidian_vault_path = os.getenv('OBSIDIAN_VAULT_PATH')
     language = os.getenv('TRANSCRIPTION_LANGUAGE', 'ru')
 
     if not api_key:
-        print("❌ OPENROUTER_API_KEY не задан в .env файле")
+        print("❌ GROQ_API_KEY не задан в .env файле")
         sys.exit(1)
 
     if not obsidian_vault_path:
