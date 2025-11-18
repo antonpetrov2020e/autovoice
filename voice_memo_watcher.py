@@ -10,13 +10,15 @@ import time
 import base64
 from pathlib import Path
 from datetime import datetime
-from typing import Set, Dict
+from typing import Set, Dict, List
 import logging
+import tempfile
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from openai import OpenAI
 from dotenv import load_dotenv
+from pydub import AudioSegment
 
 # Настройка логирования
 logging.basicConfig(
@@ -83,6 +85,8 @@ class VoiceMemoTranscriber:
         # Путь к пользовательскому словарю
         self.dictionary_path = "custom_dictionary.txt"
         self.custom_dictionary = self._load_dictionary()
+        # Максимальный размер файла для Groq (25 MB)
+        self.max_file_size_mb = 20  # Оставляем запас
 
     def _encode_audio_to_base64(self, audio_file_path: str) -> str:
         """Конвертировать аудио файл в base64"""
@@ -135,6 +139,66 @@ class VoiceMemoTranscriber:
                 self.custom_dictionary = self._load_dictionary()
         except Exception as e:
             logger.error(f"Ошибка сохранения в словарь: {e}")
+
+    def _split_audio(self, audio_file_path: str) -> List[str]:
+        """Разделить большой аудио файл на части по 20 MB
+
+        Returns:
+            List[str]: Список путей к временным файлам с частями аудио
+        """
+        try:
+            logger.info("Загружаем аудио файл для разделения...")
+            audio = AudioSegment.from_file(audio_file_path)
+
+            # Получаем размер файла
+            file_size_mb = os.path.getsize(audio_file_path) / (1024 * 1024)
+
+            # Вычисляем длительность одного чанка в миллисекундах
+            # Предполагаем линейную зависимость размера от длительности
+            total_duration_ms = len(audio)
+            chunk_duration_ms = int((self.max_file_size_mb / file_size_mb) * total_duration_ms)
+
+            logger.info(f"Разделяем файл на части по ~{chunk_duration_ms/1000/60:.1f} минут...")
+
+            # Создаем список временных файлов
+            chunk_files = []
+            temp_dir = tempfile.gettempdir()
+
+            # Разделяем аудио на части
+            for i, start_ms in enumerate(range(0, total_duration_ms, chunk_duration_ms)):
+                end_ms = min(start_ms + chunk_duration_ms, total_duration_ms)
+                chunk = audio[start_ms:end_ms]
+
+                # Создаем временный файл для части
+                chunk_file = os.path.join(temp_dir, f"chunk_{i}_{os.path.basename(audio_file_path)}")
+                chunk.export(chunk_file, format="mp4")  # Экспортируем в m4a (mp4 audio)
+
+                chunk_size_mb = os.path.getsize(chunk_file) / (1024 * 1024)
+                logger.info(f"Создана часть {i+1}: {chunk_size_mb:.2f} MB ({(end_ms-start_ms)/1000/60:.1f} минут)")
+
+                chunk_files.append(chunk_file)
+
+            logger.info(f"Файл разделен на {len(chunk_files)} частей")
+            return chunk_files
+
+        except Exception as e:
+            logger.error(f"Ошибка разделения аудио файла: {e}")
+            raise
+
+    def _transcribe_chunk(self, chunk_file_path: str) -> str:
+        """Транскрибировать одну часть аудио файла"""
+        try:
+            with open(chunk_file_path, 'rb') as audio_file:
+                transcript = self.client.audio.transcriptions.create(
+                    model=self.model,
+                    file=audio_file,
+                    language=self.language,
+                    response_format="text"
+                )
+            return transcript
+        except Exception as e:
+            logger.error(f"Ошибка транскрипции части {chunk_file_path}: {e}")
+            raise
 
     def _generate_title(self, transcript: str) -> str:
         """Сгенерировать осмысленный заголовок для записи"""
@@ -261,6 +325,7 @@ class VoiceMemoTranscriber:
         Returns:
             tuple: (transcript, title) - текст транскрипции и сгенерированный заголовок
         """
+        chunk_files = []
         try:
             logger.info(f"Начинаем транскрипцию через Groq Whisper: {audio_file_path}")
 
@@ -268,18 +333,40 @@ class VoiceMemoTranscriber:
             file_size_mb = os.path.getsize(audio_file_path) / (1024 * 1024)
             logger.info(f"Размер файла: {file_size_mb:.2f} MB")
 
-            # Whisper API принимает файл напрямую
-            logger.info(f"Отправляем запрос к модели {self.model}...")
+            # Проверяем, нужно ли разделить файл
+            if file_size_mb > self.max_file_size_mb:
+                logger.info(f"⚠️ Файл слишком большой ({file_size_mb:.2f} MB > {self.max_file_size_mb} MB)")
+                logger.info("Разделяем файл на части...")
 
-            with open(audio_file_path, 'rb') as audio_file:
-                transcript = self.client.audio.transcriptions.create(
-                    model=self.model,
-                    file=audio_file,
-                    language=self.language,
-                    response_format="text"
-                )
+                # Разделяем файл на части
+                chunk_files = self._split_audio(audio_file_path)
 
-            logger.info(f"Транскрипция завершена: {len(transcript)} символов")
+                # Транскрибируем каждую часть
+                transcripts = []
+                for i, chunk_file in enumerate(chunk_files):
+                    logger.info(f"Транскрибируем часть {i+1}/{len(chunk_files)}...")
+                    chunk_transcript = self._transcribe_chunk(chunk_file)
+                    transcripts.append(chunk_transcript)
+                    logger.info(f"Часть {i+1} транскрибирована: {len(chunk_transcript)} символов")
+
+                # Объединяем транскрипции
+                transcript = " ".join(transcripts)
+                logger.info(f"Все части объединены: {len(transcript)} символов")
+
+            else:
+                # Файл достаточно маленький, транскрибируем напрямую
+                logger.info(f"Отправляем запрос к модели {self.model}...")
+
+                with open(audio_file_path, 'rb') as audio_file:
+                    transcript = self.client.audio.transcriptions.create(
+                        model=self.model,
+                        file=audio_file,
+                        language=self.language,
+                        response_format="text"
+                    )
+
+                logger.info(f"Транскрипция завершена: {len(transcript)} символов")
+
             logger.info(f"Первые 200 символов: {transcript[:200]}...")
 
             # Генерируем заголовок ДО улучшения текста (чтобы захватить упоминание даты)
@@ -293,6 +380,16 @@ class VoiceMemoTranscriber:
         except Exception as e:
             logger.error(f"Ошибка транскрипции {audio_file_path}: {e}")
             raise
+
+        finally:
+            # Удаляем временные файлы
+            for chunk_file in chunk_files:
+                try:
+                    if os.path.exists(chunk_file):
+                        os.remove(chunk_file)
+                        logger.info(f"Удален временный файл: {chunk_file}")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить временный файл {chunk_file}: {e}")
 
 
 class ObsidianWriter:
