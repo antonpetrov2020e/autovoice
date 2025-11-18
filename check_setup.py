@@ -19,20 +19,20 @@ def check_env_file():
     return True
 
 def check_api_key():
-    """Проверка API ключа OpenAI"""
-    api_key = os.getenv('OPENAI_API_KEY')
+    """Проверка API ключа OpenRouter"""
+    api_key = os.getenv('OPENROUTER_API_KEY')
     if not api_key:
-        print("❌ OPENAI_API_KEY не задан")
+        print("❌ OPENROUTER_API_KEY не задан")
         print("💡 Добавьте ваш API ключ в .env файл")
-        print("   Получить ключ: https://platform.openai.com/api-keys")
+        print("   Получить ключ: https://openrouter.ai/keys")
         return False
 
     if api_key == "your_api_key_here":
-        print("❌ OPENAI_API_KEY не настроен (используется значение по умолчанию)")
+        print("❌ OPENROUTER_API_KEY не настроен (используется значение по умолчанию)")
         print("💡 Замените 'your_api_key_here' на реальный API ключ")
         return False
 
-    print(f"✅ OPENAI_API_KEY задан ({api_key[:7]}...)")
+    print(f"✅ OPENROUTER_API_KEY задан ({api_key[:10]}...)")
     return True
 
 def check_voice_memos_path():

@@ -6,7 +6,7 @@
 
 Это решение автоматически:
 1. **Отслеживает** появление новых записей в Voice Memos
-2. **Транскрибирует** их с помощью OpenAI Whisper
+2. **Транскрибирует** их с помощью Google Gemini через OpenRouter
 3. **Сохраняет** расшифровки в вашем Obsidian хранилище
 
 Больше не нужно вручную искать записи и отправлять на расшифровку!
@@ -46,8 +46,11 @@ cp .env.example .env
 Отредактируйте `.env` файл:
 
 ```bash
-# OpenAI API ключ (получите на https://platform.openai.com/api-keys)
-OPENAI_API_KEY=sk-your-actual-api-key-here
+# OpenRouter API ключ (получите на https://openrouter.ai/keys)
+OPENROUTER_API_KEY=sk-or-v1-your-actual-api-key-here
+
+# Модель для транскрипции (по умолчанию Gemini 2.5 Flash Lite)
+TRANSCRIPTION_MODEL=google/gemini-2.5-flash-lite-preview-09-2025
 
 # Путь к папке с записями Voice Memos (обычно этот путь)
 VOICE_MEMOS_PATH=/Users/viktorivanov/Library/Application Support/com.apple.voicememos/Recordings
@@ -58,6 +61,13 @@ OBSIDIAN_VAULT_PATH=/Users/viktorivanov/Documents/Obsidian/MyVault/Daily Diary
 # Язык транскрипции (ru = русский, en = английский)
 TRANSCRIPTION_LANGUAGE=ru
 ```
+
+### Получение OpenRouter API ключа
+
+1. Зарегистрируйтесь на https://openrouter.ai
+2. Перейдите в раздел **Keys**: https://openrouter.ai/keys
+3. Создайте новый ключ
+4. Скопируйте и вставьте в `.env` файл
 
 ### 4. Проверьте путь к Voice Memos
 
@@ -190,8 +200,9 @@ macOS может потребовать предоставить доступ к
 ### API ключ не работает
 
 1. Проверьте, что ключ правильно скопирован в `.env`
-2. Убедитесь, что у вас есть кредиты на аккаунте OpenAI
-3. Проверьте на https://platform.openai.com/api-keys
+2. Убедитесь, что у вас есть кредиты на аккаунте OpenRouter
+3. Проверьте на https://openrouter.ai/credits
+4. Убедитесь, что модель поддерживает аудио: https://openrouter.ai/models
 
 ### Записи не появляются в Obsidian
 
@@ -201,13 +212,27 @@ macOS может потребовать предоставить доступ к
 
 ## 💰 Стоимость
 
-Использование OpenAI Whisper API:
-- **$0.006 за минуту** аудио
+Использование через OpenRouter с моделью Gemini 2.5 Flash Lite:
 
-Примеры:
-- 10-минутная запись = $0.06
-- 30-минутная запись = $0.18
-- 1 час записи = $0.36
+**Стоимость зависит от модели:**
+
+- **google/gemini-2.5-flash-lite-preview-09-2025**: ~$0.01-0.05 за запрос
+  - Очень доступная
+  - Отличное качество транскрипции
+
+- **google/gemini-2.0-flash-thinking-exp:free**: **БЕСПЛАТНАЯ**
+  - Можно использовать без затрат
+  - Установите в `.env`: `TRANSCRIPTION_MODEL=google/gemini-2.0-flash-thinking-exp:free`
+
+- **google/gemini-flash-1.5**: ~$0.02-0.10 за запрос
+  - Более стабильная версия
+
+**Преимущество OpenRouter:**
+- Можно пополнить счет на $5 и этого хватит на сотни записей
+- Поддержка множества моделей
+- Гибкое ценообразование
+
+Проверить актуальные цены: https://openrouter.ai/models
 
 ## 📝 Отслеживание обработанных файлов
 
@@ -224,22 +249,44 @@ rm processed_files.json
 
 ## 🔧 Расширенная настройка
 
+### Выбор модели для транскрипции
+
+В `.env` вы можете выбрать любую модель из OpenRouter, которая поддерживает аудио:
+
+```bash
+# Бесплатная модель
+TRANSCRIPTION_MODEL=google/gemini-2.0-flash-thinking-exp:free
+
+# Быстрая и доступная (рекомендуется)
+TRANSCRIPTION_MODEL=google/gemini-2.5-flash-lite-preview-09-2025
+
+# Стабильная версия
+TRANSCRIPTION_MODEL=google/gemini-flash-1.5
+
+# Самая мощная Gemini
+TRANSCRIPTION_MODEL=google/gemini-exp-1206
+```
+
+Полный список моделей: https://openrouter.ai/models
+
 ### Изменение формата заметок
 
 Отредактируйте метод `ObsidianWriter.save_transcription()` в `voice_memo_watcher.py`
 
 ### Поддержка других форматов
 
-Скрипт поддерживает: `.m4a`, `.mp3`, `.wav`, `.m4v`
+Скрипт поддерживает: `.m4a`, `.mp3`, `.wav`, `.m4v`, `.aac`, `.ogg`, `.flac`
 
 Для добавления других форматов, измените список в методе `VoiceMemoHandler.on_created()`
 
 ### Другие языки
 
-Поддерживаются все языки Whisper. Измените `TRANSCRIPTION_LANGUAGE` в `.env`:
+Поддерживаются многие языки. Измените `TRANSCRIPTION_LANGUAGE` в `.env`:
 - `ru` - Русский
 - `en` - Английский
 - `es` - Испанский
+- `fr` - Французский
+- `de` - Немецкий
 - и т.д.
 
 ## 📄 Лицензия

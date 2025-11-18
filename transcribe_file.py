@@ -30,12 +30,13 @@ def main():
     # Загружаем конфигурацию
     load_dotenv()
 
-    api_key = os.getenv('OPENAI_API_KEY')
+    api_key = os.getenv('OPENROUTER_API_KEY')
+    model = os.getenv('TRANSCRIPTION_MODEL', 'google/gemini-2.5-flash-lite-preview-09-2025')
     obsidian_vault_path = os.getenv('OBSIDIAN_VAULT_PATH')
     language = os.getenv('TRANSCRIPTION_LANGUAGE', 'ru')
 
     if not api_key:
-        print("❌ OPENAI_API_KEY не задан в .env файле")
+        print("❌ OPENROUTER_API_KEY не задан в .env файле")
         sys.exit(1)
 
     if not obsidian_vault_path:
@@ -49,11 +50,12 @@ def main():
     print(f"🎙️  Файл: {audio_file}")
     file_size = os.path.getsize(audio_file) / (1024 * 1024)
     print(f"📊 Размер: {file_size:.2f} MB")
+    print(f"🤖 Модель: {model}")
     print(f"🌍 Язык: {language}")
     print()
 
     # Создаем объекты
-    transcriber = VoiceMemoTranscriber(api_key, language)
+    transcriber = VoiceMemoTranscriber(api_key, model, language)
     obsidian_writer = ObsidianWriter(obsidian_vault_path)
 
     try:

@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import time
+import base64
 from pathlib import Path
 from datetime import datetime
 from typing import Set, Dict
@@ -66,26 +67,100 @@ class ProcessedFilesTracker:
 
 
 class VoiceMemoTranscriber:
-    """Класс для транскрипции голосовых заметок"""
+    """Класс для транскрипции голосовых заметок через OpenRouter (Gemini)"""
 
-    def __init__(self, api_key: str, language: str = "ru"):
-        self.client = OpenAI(api_key=api_key)
+    def __init__(self, api_key: str, model: str = "google/gemini-2.5-flash-lite-preview-09-2025", language: str = "ru"):
+        # Используем OpenRouter через совместимый с OpenAI интерфейс
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1"
+        )
+        self.model = model
         self.language = language
+        self.language_names = {
+            'ru': 'русском',
+            'en': 'английском',
+            'es': 'испанском',
+            'fr': 'французском',
+            'de': 'немецком',
+            'it': 'итальянском',
+            'pt': 'португальском',
+            'zh': 'китайском',
+            'ja': 'японском',
+            'ko': 'корейском'
+        }
+
+    def _encode_audio_to_base64(self, audio_file_path: str) -> str:
+        """Конвертировать аудио файл в base64"""
+        with open(audio_file_path, 'rb') as audio_file:
+            return base64.b64encode(audio_file.read()).decode('utf-8')
+
+    def _get_mime_type(self, file_path: str) -> str:
+        """Определить MIME тип аудио файла"""
+        ext = Path(file_path).suffix.lower()
+        mime_types = {
+            '.m4a': 'audio/mp4',
+            '.mp3': 'audio/mpeg',
+            '.wav': 'audio/wav',
+            '.m4v': 'audio/mp4',
+            '.aac': 'audio/aac',
+            '.ogg': 'audio/ogg',
+            '.flac': 'audio/flac'
+        }
+        return mime_types.get(ext, 'audio/mp4')
 
     def transcribe(self, audio_file_path: str) -> str:
-        """Транскрибировать аудио файл"""
+        """Транскрибировать аудио файл через Gemini"""
         try:
-            logger.info(f"Начинаем транскрипцию: {audio_file_path}")
+            logger.info(f"Начинаем транскрипцию через Gemini: {audio_file_path}")
 
-            with open(audio_file_path, 'rb') as audio_file:
-                transcript = self.client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=audio_file,
-                    language=self.language,
-                    response_format="text"
-                )
+            # Получаем размер файла
+            file_size_mb = os.path.getsize(audio_file_path) / (1024 * 1024)
+            logger.info(f"Размер файла: {file_size_mb:.2f} MB")
 
+            # Кодируем аудио в base64
+            logger.info("Кодируем аудио в base64...")
+            audio_base64 = self._encode_audio_to_base64(audio_file_path)
+            mime_type = self._get_mime_type(audio_file_path)
+
+            # Формируем запрос к Gemini
+            language_name = self.language_names.get(self.language, self.language)
+            prompt = f"""Пожалуйста, транскрибируй это аудио на {language_name} языке.
+
+Требования:
+- Верни только текст транскрипции без дополнительных комментариев
+- Сохрани естественную структуру речи с абзацами
+- Не добавляй метаданные, заголовки или пояснения
+- Если речь неразборчива, пропусти эти фрагменты"""
+
+            # Отправляем запрос
+            logger.info(f"Отправляем запрос к модели {self.model}...")
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt
+                            },
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": audio_base64,
+                                    "format": mime_type.split('/')[-1]
+                                }
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=4096
+            )
+
+            transcript = response.choices[0].message.content.strip()
             logger.info(f"Транскрипция завершена: {len(transcript)} символов")
+
             return transcript
 
         except Exception as e:
@@ -250,14 +325,15 @@ def main():
     load_dotenv()
 
     # Получаем настройки
-    api_key = os.getenv('OPENAI_API_KEY')
+    api_key = os.getenv('OPENROUTER_API_KEY')
+    model = os.getenv('TRANSCRIPTION_MODEL', 'google/gemini-2.5-flash-lite-preview-09-2025')
     voice_memos_path = os.getenv('VOICE_MEMOS_PATH')
     obsidian_vault_path = os.getenv('OBSIDIAN_VAULT_PATH')
     language = os.getenv('TRANSCRIPTION_LANGUAGE', 'ru')
 
     # Проверяем наличие необходимых настроек
     if not api_key:
-        logger.error("❌ OPENAI_API_KEY не задан в .env файле")
+        logger.error("❌ OPENROUTER_API_KEY не задан в .env файле")
         sys.exit(1)
 
     if not voice_memos_path:
@@ -281,11 +357,12 @@ def main():
     logger.info("🎙️ Voice Memo Watcher запущен")
     logger.info(f"📂 Отслеживаем: {voice_memos_path}")
     logger.info(f"📝 Сохраняем в: {obsidian_vault_path}")
+    logger.info(f"🤖 Модель: {model}")
     logger.info(f"🌍 Язык: {language}")
 
     # Создаем объекты
     tracker = ProcessedFilesTracker()
-    transcriber = VoiceMemoTranscriber(api_key, language)
+    transcriber = VoiceMemoTranscriber(api_key, model, language)
     obsidian_writer = ObsidianWriter(obsidian_vault_path)
     event_handler = VoiceMemoHandler(transcriber, obsidian_writer, tracker)
 
