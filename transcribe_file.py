@@ -34,6 +34,7 @@ def main():
     model = os.getenv('TRANSCRIPTION_MODEL', 'whisper-large-v3-turbo')
     obsidian_vault_path = os.getenv('OBSIDIAN_VAULT_PATH')
     language = os.getenv('TRANSCRIPTION_LANGUAGE', 'ru')
+    improve_text = os.getenv('IMPROVE_TEXT', 'true').lower() == 'true'
 
     if not api_key:
         print("❌ GROQ_API_KEY не задан в .env файле")
@@ -52,10 +53,11 @@ def main():
     print(f"📊 Размер: {file_size:.2f} MB")
     print(f"🤖 Модель: {model}")
     print(f"🌍 Язык: {language}")
+    print(f"✨ Улучшение текста: {'включено' if improve_text else 'выключено'}")
     print()
 
     # Создаем объекты
-    transcriber = VoiceMemoTranscriber(api_key, model, language)
+    transcriber = VoiceMemoTranscriber(api_key, model, language, improve_text)
     obsidian_writer = ObsidianWriter(obsidian_vault_path)
 
     try:

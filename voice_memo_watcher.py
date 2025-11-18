@@ -69,7 +69,7 @@ class ProcessedFilesTracker:
 class VoiceMemoTranscriber:
     """Класс для транскрипции голосовых заметок через Groq (Whisper Large v3)"""
 
-    def __init__(self, api_key: str, model: str = "whisper-large-v3-turbo", language: str = "ru"):
+    def __init__(self, api_key: str, model: str = "whisper-large-v3-turbo", language: str = "ru", improve_text: bool = True):
         # Используем Groq с Whisper
         self.client = OpenAI(
             api_key=api_key,
@@ -77,6 +77,9 @@ class VoiceMemoTranscriber:
         )
         self.model = model
         self.language = language
+        self.improve_text = improve_text
+        # Модель для улучшения текста
+        self.text_model = "llama-3.3-70b-versatile"
 
     def _encode_audio_to_base64(self, audio_file_path: str) -> str:
         """Конвертировать аудио файл в base64"""
@@ -96,6 +99,51 @@ class VoiceMemoTranscriber:
             '.flac': 'audio/flac'
         }
         return mime_types.get(ext, 'audio/mp4')
+
+    def _improve_transcript(self, transcript: str) -> str:
+        """Улучшить транскрипцию: исправить ошибки, разбить на абзацы"""
+        try:
+            logger.info("Улучшаем текст транскрипции...")
+
+            prompt = f"""Ты редактор текста. Твоя задача - улучшить транскрипцию голосовой записи.
+
+ИСХОДНЫЙ ТЕКСТ:
+{transcript}
+
+ЗАДАЧИ:
+1. Исправь опечатки и грамматические ошибки
+2. Расставь правильную пунктуацию
+3. Разбей текст на смысловые абзацы (по темам/событиям)
+4. Сохрани естественность и стиль устной речи (не делай текст слишком формальным)
+5. Не добавляй ничего от себя, только редактируй существующий текст
+6. Сохрани все имена, даты, цифры как есть
+
+ВАЖНО:
+- Верни ТОЛЬКО отредактированный текст без комментариев
+- Не добавляй заголовки, вступления или заключения
+- Текст должен оставаться в первом лице и сохранять интонацию автора"""
+
+            response = self.client.chat.completions.create(
+                model=self.text_model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.3,
+                max_tokens=8000
+            )
+
+            improved_text = response.choices[0].message.content.strip()
+            logger.info(f"Текст улучшен: {len(improved_text)} символов")
+
+            return improved_text
+
+        except Exception as e:
+            logger.error(f"Ошибка улучшения текста: {e}")
+            logger.info("Возвращаем исходную транскрипцию")
+            return transcript
 
     def transcribe(self, audio_file_path: str) -> str:
         """Транскрибировать аудио файл через Groq Whisper"""
@@ -119,6 +167,10 @@ class VoiceMemoTranscriber:
 
             logger.info(f"Транскрипция завершена: {len(transcript)} символов")
             logger.info(f"Первые 200 символов: {transcript[:200]}...")
+
+            # Улучшаем текст, если включено
+            if self.improve_text:
+                transcript = self._improve_transcript(transcript)
 
             return transcript
 
@@ -289,6 +341,7 @@ def main():
     voice_memos_path = os.getenv('VOICE_MEMOS_PATH')
     obsidian_vault_path = os.getenv('OBSIDIAN_VAULT_PATH')
     language = os.getenv('TRANSCRIPTION_LANGUAGE', 'ru')
+    improve_text = os.getenv('IMPROVE_TEXT', 'true').lower() == 'true'
 
     # Проверяем наличие необходимых настроек
     if not api_key:
@@ -318,10 +371,11 @@ def main():
     logger.info(f"📝 Сохраняем в: {obsidian_vault_path}")
     logger.info(f"🤖 Модель: {model}")
     logger.info(f"🌍 Язык: {language}")
+    logger.info(f"✨ Улучшение текста: {'включено' if improve_text else 'выключено'}")
 
     # Создаем объекты
     tracker = ProcessedFilesTracker()
-    transcriber = VoiceMemoTranscriber(api_key, model, language)
+    transcriber = VoiceMemoTranscriber(api_key, model, language, improve_text)
     obsidian_writer = ObsidianWriter(obsidian_vault_path)
     event_handler = VoiceMemoHandler(transcriber, obsidian_writer, tracker)
 
