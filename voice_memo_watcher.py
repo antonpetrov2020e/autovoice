@@ -395,7 +395,7 @@ class VoiceMemoTranscriber:
 class TaskExtractor:
     """Класс для извлечения задач и напоминаний из текста"""
 
-    def __init__(self, client: OpenAI, model: str = "llama-3.3-70b-versatile"):
+    def __init__(self, client: OpenAI, model: str = "llama-3.1-8b-instant"):
         self.client = client
         self.model = model
 
