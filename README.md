@@ -71,13 +71,24 @@ cp .env.example .env
 Отредактируйте `.env` файл:
 
 ```bash
-# OpenRouter API ключ (получите на https://openrouter.ai/keys)
-OPENROUTER_API_KEY=sk-or-v1-your-actual-api-key-here
+# Groq API ключ (БЕСПЛАТНО на https://console.groq.com/keys)
+# Используется для транскрипции аудио (Whisper)
+GROQ_API_KEY=your_groq_api_key_here
 
-# Модель для транскрипции (по умолчанию Gemini 2.5 Flash Lite)
-TRANSCRIPTION_MODEL=google/gemini-2.5-flash-lite-preview-09-2025
+# OpenRouter API ключ (https://openrouter.ai/keys)
+# Используется для улучшения текста и извлечения задач
+OPENROUTER_API_KEY=your_openrouter_api_key_here
 
-# Путь к папке с записями Voice Memos (обычно этот путь)
+# Модель для транскрипции (Whisper Large v3 Turbo - быстрая и точная)
+TRANSCRIPTION_MODEL=whisper-large-v3-turbo
+
+# Модель для улучшения текста (рекомендуется gpt-4o-mini)
+TEXT_IMPROVEMENT_MODEL=openai/gpt-4o-mini
+
+# Модель для извлечения задач
+TASK_EXTRACTION_MODEL=openai/gpt-4o-mini
+
+# Путь к папке с записями Voice Memos
 VOICE_MEMOS_PATH=/Users/viktorivanov/Library/Application Support/com.apple.voicememos/Recordings
 
 # Путь к папке в Obsidian, куда сохранять транскрипции
@@ -85,14 +96,25 @@ OBSIDIAN_VAULT_PATH=/Users/viktorivanov/Documents/Obsidian/MyVault/Daily Diary
 
 # Язык транскрипции (ru = русский, en = английский)
 TRANSCRIPTION_LANGUAGE=ru
+
+# Извлечение задач из дневника
+EXTRACT_TASKS=true
 ```
 
-### Получение OpenRouter API ключа
+### Получение API ключей
 
+**Groq (бесплатно для транскрипции):**
+1. Зарегистрируйтесь на https://console.groq.com
+2. Перейдите в раздел **API Keys**: https://console.groq.com/keys
+3. Создайте новый ключ
+4. Скопируйте и вставьте в `.env` как `GROQ_API_KEY`
+
+**OpenRouter (для улучшения текста и задач):**
 1. Зарегистрируйтесь на https://openrouter.ai
 2. Перейдите в раздел **Keys**: https://openrouter.ai/keys
 3. Создайте новый ключ
-4. Скопируйте и вставьте в `.env` файл
+4. Скопируйте и вставьте в `.env` как `OPENROUTER_API_KEY`
+5. Пополните баланс (от $5) на https://openrouter.ai/credits
 
 ### 5. Проверьте путь к Voice Memos
 
@@ -248,25 +270,43 @@ macOS может потребовать предоставить доступ к
 
 ## 💰 Стоимость
 
-Использование через OpenRouter с моделью Gemini 2.5 Flash Lite:
+Система использует два API:
 
-**Стоимость зависит от модели:**
+### Groq (транскрипция аудио)
+- **Бесплатно!** 🎉
+- Whisper Large v3 Turbo
+- 100% бесплатная транскрипция
+- Лимит: разумное использование (обычно хватает)
 
-- **google/gemini-2.5-flash-lite-preview-09-2025**: ~$0.01-0.05 за запрос
-  - Очень доступная
-  - Отличное качество транскрипции
+### OpenRouter (улучшение текста и извлечение задач)
 
-- **google/gemini-2.0-flash-thinking-exp:free**: **БЕСПЛАТНАЯ**
-  - Можно использовать без затрат
-  - Установите в `.env`: `TRANSCRIPTION_MODEL=google/gemini-2.0-flash-thinking-exp:free`
+**Рекомендуемые модели:**
 
-- **google/gemini-flash-1.5**: ~$0.02-0.10 за запрос
-  - Более стабильная версия
+- **openai/gpt-4o-mini** (рекомендуется)
+  - Input: $0.15 / 1M токенов
+  - Output: $0.60 / 1M токенов
+  - Отличное соотношение цена/качество
+  - ~$0.01-0.03 за запись
 
-**Преимущество OpenRouter:**
-- Можно пополнить счет на $5 и этого хватит на сотни записей
-- Поддержка множества моделей
-- Гибкое ценообразование
+- **google/gemini-2.0-flash-exp:free** (бесплатная!)
+  - **БЕСПЛАТНАЯ** с ограничениями
+  - Хорошее качество
+  - Могут быть лимиты
+
+- **anthropic/claude-3.5-haiku**
+  - Input: $1 / 1M токенов
+  - Output: $5 / 1M токенов
+  - Лучшее качество текста
+  - ~$0.03-0.08 за запись
+
+**Примерная стоимость:**
+- Groq (транскрипция): **$0**
+- OpenRouter (улучшение + задачи): **~$0.02-0.05** за запись
+- **Итого: ~$0.02-0.05 за запись**
+
+**Для 100 записей в месяц: $2-5**
+
+Пополните баланс OpenRouter на $5 - этого хватит на 100-250 записей!
 
 Проверить актуальные цены: https://openrouter.ai/models
 
@@ -396,25 +436,56 @@ EXTRACT_TASKS=false
 
 ## 🔧 Расширенная настройка
 
-### Выбор модели для транскрипции
+### Выбор моделей
 
-В `.env` вы можете выбрать любую модель из OpenRouter, которая поддерживает аудио:
+Система позволяет настроить разные модели для разных задач:
+
+#### Модель транскрипции (Groq/Whisper)
 
 ```bash
-# Бесплатная модель
-TRANSCRIPTION_MODEL=google/gemini-2.0-flash-thinking-exp:free
+# Рекомендуется (быстрая и точная)
+TRANSCRIPTION_MODEL=whisper-large-v3-turbo
 
-# Быстрая и доступная (рекомендуется)
-TRANSCRIPTION_MODEL=google/gemini-2.5-flash-lite-preview-09-2025
+# Более точная, но медленнее
+TRANSCRIPTION_MODEL=whisper-large-v3
 
-# Стабильная версия
-TRANSCRIPTION_MODEL=google/gemini-flash-1.5
-
-# Самая мощная Gemini
-TRANSCRIPTION_MODEL=google/gemini-exp-1206
+# Только английский, быстрее
+TRANSCRIPTION_MODEL=distil-whisper-large-v3-en
 ```
 
-Полный список моделей: https://openrouter.ai/models
+#### Модель улучшения текста (OpenRouter)
+
+```bash
+# GPT-4o Mini (рекомендуется) - баланс качества и цены
+TEXT_IMPROVEMENT_MODEL=openai/gpt-4o-mini
+
+# Claude 3.5 Haiku - лучшее качество текста
+TEXT_IMPROVEMENT_MODEL=anthropic/claude-3.5-haiku
+
+# Gemini 2.0 Flash - БЕСПЛАТНАЯ
+TEXT_IMPROVEMENT_MODEL=google/gemini-2.0-flash-exp:free
+
+# Gemini Flash 1.5 - быстрая и дешевая
+TEXT_IMPROVEMENT_MODEL=google/gemini-flash-1.5
+```
+
+#### Модель извлечения задач (OpenRouter)
+
+```bash
+# GPT-4o Mini (рекомендуется)
+TASK_EXTRACTION_MODEL=openai/gpt-4o-mini
+
+# Можно использовать более дешевую модель для экономии
+TASK_EXTRACTION_MODEL=google/gemini-flash-1.5
+
+# Или бесплатную
+TASK_EXTRACTION_MODEL=google/gemini-2.0-flash-exp:free
+
+# Или LLaMA 3.1 8B (бесплатная)
+TASK_EXTRACTION_MODEL=meta-llama/llama-3.1-8b-instruct:free
+```
+
+Полный список моделей OpenRouter: https://openrouter.ai/models
 
 ### Изменение формата заметок
 
