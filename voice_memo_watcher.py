@@ -485,6 +485,203 @@ class TaskExtractor:
             return {"tasks": [], "important": []}
 
 
+class SelfReflectionAnalyzer:
+    """Класс для глубинного анализа дневниковых записей"""
+
+    def __init__(self, client: OpenAI, model: str = "openai/gpt-4o-mini"):
+        self.client = client
+        self.model = model
+
+    def analyze_diary(self, transcript: str, date: datetime) -> Dict[str, str]:
+        """Провести глубинный самоанализ дневниковой записи
+
+        Returns:
+            Dict с ключами: 'gratitude', 'emotions', 'meaning', 'growth'
+        """
+        try:
+            logger.info("Проводим глубинный самоанализ записи...")
+
+            prompt = f"""Проанализируй дневниковую запись и создай глубокий, честный самоанализ по четырём блокам.
+
+ДНЕВНИКОВАЯ ЗАПИСЬ:
+{transcript}
+
+Проведи анализ бережно, без банальностей, опираясь только на текст. Отвечай кратко, но точно.
+
+БЛОК 1 — БЛАГОДАРНОСТЬ И ДОСТИЖЕНИЯ:
+- За что я благодарен сегодня? (найди в тексте моменты ценности)
+- С чем я справился? (даже маленькие шаги и усилия)
+- Что приятного я сделал для себя?
+
+БЛОК 2 — ЭМОЦИИ И ТЕЛО:
+- Какое чувство или мысль меня зовёт? (определи доминирующую эмоцию)
+- Что это чувство хочет мне сказать? (интерпретация без осуждения)
+- Как оно ощущается в теле? (метафора: цвет, текстура, вес)
+
+БЛОК 3 — СМЫСЛ И БУДУЩЕЕ:
+- Что сделало бы сегодняшний день по-настоящему стоящим?
+- На что я трачу время впустую? (честно, без самобичевания)
+- Что меня вдохновляет в будущем? (найди микро-надежды в тексте)
+
+БЛОК 4 — ВЫЗОВЫ И РОСТ:
+- Какое сложное действие я откладываю?
+- Какой внутренний "монстр" или страх мешает?
+- Что бы сказал мне мудрый я в 90 лет? (простой, тихий совет)
+
+ФОРМАТ ОТВЕТА (строго JSON):
+{{
+  "gratitude": "Краткий текст по блоку 1 (2-4 предложения)",
+  "emotions": "Краткий текст по блоку 2 (2-4 предложения)",
+  "meaning": "Краткий текст по блоку 3 (2-4 предложения)",
+  "growth": "Краткий текст по блоку 4 (2-4 предложения)"
+}}
+
+ВАЖНО:
+- Пиши от первого лица ("я")
+- Будь честным, но бережным
+- Избегай общих фраз и клише
+- Опирайся только на факты из дневника
+- Не морализируй, не учи, не оценивай
+
+Верни ТОЛЬКО JSON без комментариев."""
+
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.4,
+                max_tokens=1500
+            )
+
+            result_text = response.choices[0].message.content.strip()
+
+            # Убираем возможные markdown блоки кода
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+                result_text = result_text.strip()
+
+            result = json.loads(result_text)
+
+            logger.info("Самоанализ завершен")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Ошибка анализа дневника: {e}")
+            return {
+                "gratitude": "",
+                "emotions": "",
+                "meaning": "",
+                "growth": ""
+            }
+
+
+class ReflectionManager:
+    """Класс для управления файлом с самоанализом и рефлексией"""
+
+    def __init__(self, reflection_file_path: str = "Самоанализ дневника.md"):
+        self.reflection_file_path = Path(reflection_file_path)
+        self._ensure_file_exists()
+
+    def _ensure_file_exists(self):
+        """Создать файл, если его нет"""
+        if not self.reflection_file_path.exists():
+            with open(self.reflection_file_path, 'w', encoding='utf-8') as f:
+                f.write("# Самоанализ и рефлексия\n\n")
+            logger.info(f"Создан файл рефлексии: {self.reflection_file_path}")
+
+    def _get_month_name(self, date: datetime) -> str:
+        """Получить название месяца на русском"""
+        months = {
+            1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
+            5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
+            9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
+        }
+        return f"{months[date.month]} {date.year}"
+
+    def add_reflection(self, date: datetime, analysis: Dict[str, str], note_title: str = None):
+        """Добавить самоанализ в файл
+
+        Args:
+            date: Дата записи
+            analysis: Результат анализа с ключами gratitude, emotions, meaning, growth
+            note_title: Название заметки (опционально)
+        """
+        # Если все блоки пустые, не добавляем
+        if not any(analysis.values()):
+            logger.info("Анализ пуст, не добавляем в файл")
+            return
+
+        try:
+            # Читаем текущее содержимое
+            with open(self.reflection_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            month_header = f"## {self._get_month_name(date)}"
+            days_ru = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье']
+            day_header = f"### {date.day} {self._get_month_name(date).split()[0].lower()}, {days_ru[date.weekday()]}"
+
+            # Формируем новую секцию
+            new_section = f"\n{day_header}\n\n"
+
+            if note_title:
+                new_section += f"*Из заметки: {note_title}*\n\n"
+
+            if analysis.get('gratitude'):
+                new_section += "#### 1. Благодарность и достижения\n"
+                new_section += f"{analysis['gratitude']}\n\n"
+
+            if analysis.get('emotions'):
+                new_section += "#### 2. Эмоции и тело\n"
+                new_section += f"{analysis['emotions']}\n\n"
+
+            if analysis.get('meaning'):
+                new_section += "#### 3. Смысл и будущее\n"
+                new_section += f"{analysis['meaning']}\n\n"
+
+            if analysis.get('growth'):
+                new_section += "#### 4. Вызовы и рост\n"
+                new_section += f"{analysis['growth']}\n\n"
+
+            new_section += "---\n"
+
+            # Проверяем, есть ли уже раздел для этого месяца
+            if month_header in content:
+                # Месяц уже есть, добавляем в конец месяца
+                parts = content.split(month_header)
+                before_month = parts[0] + month_header
+                after_month = parts[1]
+
+                # Ищем следующий месяц
+                next_month_pos = after_month.find("\n## ")
+                if next_month_pos != -1:
+                    # Вставляем перед следующим месяцем
+                    month_content = after_month[:next_month_pos]
+                    rest = after_month[next_month_pos:]
+                    new_content = before_month + month_content + new_section + rest
+                else:
+                    # Это последний месяц, добавляем в конец
+                    new_content = content + new_section
+            else:
+                # Месяца нет, добавляем новый раздел
+                new_content = content + f"\n{month_header}\n" + new_section
+
+            # Записываем обновленное содержимое
+            with open(self.reflection_file_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+
+            logger.info(f"Рефлексия добавлена в {self.reflection_file_path}")
+
+        except Exception as e:
+            logger.error(f"Ошибка добавления рефлексии в файл: {e}")
+
+
 class TaskManager:
     """Класс для управления единым файлом с задачами из дневника"""
 
@@ -652,12 +849,16 @@ class VoiceMemoHandler(FileSystemEventHandler):
                  obsidian_writer: ObsidianWriter,
                  tracker: ProcessedFilesTracker,
                  task_extractor: TaskExtractor = None,
-                 task_manager: TaskManager = None):
+                 task_manager: TaskManager = None,
+                 reflection_analyzer: SelfReflectionAnalyzer = None,
+                 reflection_manager: ReflectionManager = None):
         self.transcriber = transcriber
         self.obsidian_writer = obsidian_writer
         self.tracker = tracker
         self.task_extractor = task_extractor
         self.task_manager = task_manager
+        self.reflection_analyzer = reflection_analyzer
+        self.reflection_manager = reflection_manager
         self.processing = set()
 
     def on_created(self, event):
@@ -719,6 +920,16 @@ class VoiceMemoHandler(FileSystemEventHandler):
                     note_title=title
                 )
 
+            # Проводим глубинный самоанализ (если включено)
+            if self.reflection_analyzer and self.reflection_manager:
+                logger.info("Проводим глубинный самоанализ...")
+                reflection_data = self.reflection_analyzer.analyze_diary(transcription, created_time)
+                self.reflection_manager.add_reflection(
+                    date=created_time,
+                    analysis=reflection_data,
+                    note_title=title
+                )
+
             # Отмечаем как обработанный
             self.tracker.mark_processed(file_path)
 
@@ -775,12 +986,15 @@ def main():
     transcription_model = os.getenv('TRANSCRIPTION_MODEL', 'whisper-large-v3-turbo')
     text_improvement_model = os.getenv('TEXT_IMPROVEMENT_MODEL', 'openai/gpt-4o-mini')
     task_extraction_model = os.getenv('TASK_EXTRACTION_MODEL', 'openai/gpt-4o-mini')
+    self_reflection_model = os.getenv('SELF_REFLECTION_MODEL', 'openai/gpt-4o-mini')
     voice_memos_path = os.getenv('VOICE_MEMOS_PATH')
     obsidian_vault_path = os.getenv('OBSIDIAN_VAULT_PATH')
     language = os.getenv('TRANSCRIPTION_LANGUAGE', 'ru')
     improve_text = os.getenv('IMPROVE_TEXT', 'true').lower() == 'true'
     extract_tasks = os.getenv('EXTRACT_TASKS', 'true').lower() == 'true'
+    enable_self_reflection = os.getenv('ENABLE_SELF_REFLECTION', 'true').lower() == 'true'
     tasks_file_path = os.getenv('TASKS_FILE_PATH', 'Задачи из дневника.md')
+    reflection_file_path = os.getenv('REFLECTION_FILE_PATH', 'Самоанализ дневника.md')
 
     # Проверяем наличие необходимых настроек
     if not groq_api_key:
@@ -822,6 +1036,10 @@ def main():
     if extract_tasks:
         logger.info(f"🔍 Модель извлечения задач: {task_extraction_model} (OpenRouter)")
         logger.info(f"📄 Файл задач: {tasks_file_path}")
+    logger.info(f"🧠 Глубинный самоанализ: {'включен' if enable_self_reflection else 'выключен'}")
+    if enable_self_reflection:
+        logger.info(f"💭 Модель самоанализа: {self_reflection_model} (OpenRouter)")
+        logger.info(f"📖 Файл рефлексии: {reflection_file_path}")
 
     # Создаем OpenRouter клиента для улучшения текста и извлечения задач
     openrouter_client = OpenAI(
@@ -848,7 +1066,18 @@ def main():
         task_extractor = TaskExtractor(openrouter_client, task_extraction_model)
         task_manager = TaskManager(tasks_file_path)
 
-    event_handler = VoiceMemoHandler(transcriber, obsidian_writer, tracker, task_extractor, task_manager)
+    # Создаем объекты для самоанализа (если включено)
+    reflection_analyzer = None
+    reflection_manager = None
+    if enable_self_reflection:
+        reflection_analyzer = SelfReflectionAnalyzer(openrouter_client, self_reflection_model)
+        reflection_manager = ReflectionManager(reflection_file_path)
+
+    event_handler = VoiceMemoHandler(
+        transcriber, obsidian_writer, tracker,
+        task_extractor, task_manager,
+        reflection_analyzer, reflection_manager
+    )
 
     # Обрабатываем существующие файлы
     process_existing_files(voice_memos_path, event_handler)
