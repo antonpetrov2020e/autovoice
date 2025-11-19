@@ -71,17 +71,21 @@ class ProcessedFilesTracker:
 class VoiceMemoTranscriber:
     """Класс для транскрипции голосовых заметок через Groq (Whisper Large v3)"""
 
-    def __init__(self, api_key: str, model: str = "whisper-large-v3-turbo", language: str = "ru", improve_text: bool = True):
-        # Используем Groq с Whisper
-        self.client = OpenAI(
-            api_key=api_key,
+    def __init__(self, groq_api_key: str, openrouter_client: OpenAI = None,
+                 transcription_model: str = "whisper-large-v3-turbo",
+                 text_model: str = "openai/gpt-4o-mini",
+                 language: str = "ru", improve_text: bool = True):
+        # Используем Groq только для транскрипции (Whisper)
+        self.transcription_client = OpenAI(
+            api_key=groq_api_key,
             base_url="https://api.groq.com/openai/v1"
         )
-        self.model = model
+        # OpenRouter для улучшения текста и генерации заголовков
+        self.text_client = openrouter_client
+        self.transcription_model = transcription_model
+        self.text_model = text_model
         self.language = language
         self.improve_text = improve_text
-        # Модель для улучшения текста
-        self.text_model = "llama-3.3-70b-versatile"
         # Путь к пользовательскому словарю
         self.dictionary_path = "custom_dictionary.txt"
         self.custom_dictionary = self._load_dictionary()
@@ -189,8 +193,8 @@ class VoiceMemoTranscriber:
         """Транскрибировать одну часть аудио файла"""
         try:
             with open(chunk_file_path, 'rb') as audio_file:
-                transcript = self.client.audio.transcriptions.create(
-                    model=self.model,
+                transcript = self.transcription_client.audio.transcriptions.create(
+                    model=self.transcription_model,
                     file=audio_file,
                     language=self.language,
                     response_format="text"
@@ -225,7 +229,7 @@ class VoiceMemoTranscriber:
 
 Верни ТОЛЬКО заголовок без комментариев."""
 
-            response = self.client.chat.completions.create(
+            response = self.text_client.chat.completions.create(
                 model=self.text_model,
                 messages=[
                     {
@@ -288,7 +292,7 @@ class VoiceMemoTranscriber:
 - Текст должен оставаться в первом лице и сохранять интонацию автора
 - Если встретишь редкие имена, фамилии, термины или названия, которых нет в словаре, в конце текста после тега [СЛОВАРЬ] перечисли их через запятую"""
 
-            response = self.client.chat.completions.create(
+            response = self.text_client.chat.completions.create(
                 model=self.text_model,
                 messages=[
                     {
@@ -355,11 +359,11 @@ class VoiceMemoTranscriber:
 
             else:
                 # Файл достаточно маленький, транскрибируем напрямую
-                logger.info(f"Отправляем запрос к модели {self.model}...")
+                logger.info(f"Отправляем запрос к модели {self.transcription_model}...")
 
                 with open(audio_file_path, 'rb') as audio_file:
-                    transcript = self.client.audio.transcriptions.create(
-                        model=self.model,
+                    transcript = self.transcription_client.audio.transcriptions.create(
+                        model=self.transcription_model,
                         file=audio_file,
                         language=self.language,
                         response_format="text"
@@ -395,7 +399,7 @@ class VoiceMemoTranscriber:
 class TaskExtractor:
     """Класс для извлечения задач и напоминаний из текста"""
 
-    def __init__(self, client: OpenAI, model: str = "llama-3.1-8b-instant"):
+    def __init__(self, client: OpenAI, model: str = "openai/gpt-4o-mini"):
         self.client = client
         self.model = model
 
@@ -766,8 +770,11 @@ def main():
     load_dotenv()
 
     # Получаем настройки
-    api_key = os.getenv('GROQ_API_KEY')
-    model = os.getenv('TRANSCRIPTION_MODEL', 'whisper-large-v3-turbo')
+    groq_api_key = os.getenv('GROQ_API_KEY')
+    openrouter_api_key = os.getenv('OPENROUTER_API_KEY')
+    transcription_model = os.getenv('TRANSCRIPTION_MODEL', 'whisper-large-v3-turbo')
+    text_improvement_model = os.getenv('TEXT_IMPROVEMENT_MODEL', 'openai/gpt-4o-mini')
+    task_extraction_model = os.getenv('TASK_EXTRACTION_MODEL', 'openai/gpt-4o-mini')
     voice_memos_path = os.getenv('VOICE_MEMOS_PATH')
     obsidian_vault_path = os.getenv('OBSIDIAN_VAULT_PATH')
     language = os.getenv('TRANSCRIPTION_LANGUAGE', 'ru')
@@ -776,8 +783,13 @@ def main():
     tasks_file_path = os.getenv('TASKS_FILE_PATH', 'Задачи из дневника.md')
 
     # Проверяем наличие необходимых настроек
-    if not api_key:
+    if not groq_api_key:
         logger.error("❌ GROQ_API_KEY не задан в .env файле")
+        sys.exit(1)
+
+    if not openrouter_api_key:
+        logger.error("❌ OPENROUTER_API_KEY не задан в .env файле")
+        logger.info("💡 Получите ключ на https://openrouter.ai/keys")
         sys.exit(1)
 
     if not voice_memos_path:
@@ -802,28 +814,38 @@ def main():
     logger.info("🎙️ Voice Memo Watcher запущен")
     logger.info(f"📂 Отслеживаем: {voice_memos_path}")
     logger.info(f"📝 Сохраняем в: {obsidian_vault_path}")
-    logger.info(f"🤖 Модель: {model}")
+    logger.info(f"🎤 Модель транскрипции: {transcription_model} (Groq)")
+    logger.info(f"✍️  Модель улучшения текста: {text_improvement_model} (OpenRouter)")
     logger.info(f"🌍 Язык: {language}")
     logger.info(f"✨ Улучшение текста: {'включено' if improve_text else 'выключено'}")
     logger.info(f"📋 Извлечение задач: {'включено' if extract_tasks else 'выключено'}")
     if extract_tasks:
+        logger.info(f"🔍 Модель извлечения задач: {task_extraction_model} (OpenRouter)")
         logger.info(f"📄 Файл задач: {tasks_file_path}")
+
+    # Создаем OpenRouter клиента для улучшения текста и извлечения задач
+    openrouter_client = OpenAI(
+        api_key=openrouter_api_key,
+        base_url="https://openrouter.ai/api/v1"
+    )
 
     # Создаем объекты
     tracker = ProcessedFilesTracker()
-    transcriber = VoiceMemoTranscriber(api_key, model, language, improve_text)
+    transcriber = VoiceMemoTranscriber(
+        groq_api_key=groq_api_key,
+        openrouter_client=openrouter_client,
+        transcription_model=transcription_model,
+        text_model=text_improvement_model,
+        language=language,
+        improve_text=improve_text
+    )
     obsidian_writer = ObsidianWriter(obsidian_vault_path)
 
     # Создаем объекты для извлечения задач (если включено)
     task_extractor = None
     task_manager = None
     if extract_tasks:
-        # Создаем клиента для Groq API
-        groq_client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.groq.com/openai/v1"
-        )
-        task_extractor = TaskExtractor(groq_client)
+        task_extractor = TaskExtractor(openrouter_client, task_extraction_model)
         task_manager = TaskManager(tasks_file_path)
 
     event_handler = VoiceMemoHandler(transcriber, obsidian_writer, tracker, task_extractor, task_manager)
